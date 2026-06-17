@@ -1,0 +1,2 @@
+required_variables: [member_name, appointment_location]
+body: "Hi {member_name}, this is a reminder of your appointment at {appointment_location}."
