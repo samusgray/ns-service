@@ -34,6 +34,10 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's Depends()/Query()/etc. are designed to be called in argument defaults.
+extend-immutable-calls = ["fastapi.Depends"]
+
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",

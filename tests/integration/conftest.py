@@ -10,6 +10,10 @@ TEST_DATABASE_URL = os.environ.get(
     "postgresql+psycopg://sg@localhost:5432/notification_service_test",
 )
 
+# The app builds its engine from DATABASE_URL at import time; point it at the test DB
+# so importing the app during integration tests never touches a dev/prod database.
+os.environ.setdefault("DATABASE_URL", TEST_DATABASE_URL)
+
 
 @pytest.fixture(scope="session")
 def engine():
