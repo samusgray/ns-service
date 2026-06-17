@@ -168,8 +168,35 @@ the original record on replay.
 ### 3. Asynchronous delivery via a transactional outbox
 Decouple accepting a request from delivering it: persist `pending` and an outbox row in one
 transaction → a worker delivers with retries/backoff → status is updated. This is exactly why
-`pending` already exists in the schema. It also makes the service resilient to provider downtime
-and turns the current single terminal-state write into the real lifecycle.
+`pending` already exists in the schema, and it turns the current single terminal-state write into
+the real lifecycle.
+
+**Tolerating provider outages** (a vendor — Twilio for SMS, Mailgun for email — down for a while,
+then back). The same machinery handles every channel; the provider is just a different adapter
+behind the breaker:
+
+- **Durability before acknowledgement.** The outbox commit means a vendor outage never fails or
+  drops a `POST` — the API returns `202 Accepted` and the intent survives; delivery happens out of
+  band.
+- **Worker pool, not inline calls.** Workers claim due jobs (`SELECT … FOR UPDATE SKIP LOCKED`)
+  under a **lease** so a crashed worker's job is reclaimed, not stranded.
+- **Capped exponential backoff + jitter** on retryable failures (timeouts, `5xx`, `429`); permanent
+  `4xx` (invalid number/address) fail fast without retrying. Jitter prevents a synchronized retry
+  stampede.
+- **Per-provider circuit breaker.** After sustained failures the breaker **opens** and workers stop
+  hammering that vendor; after a cooldown a **half-open** probe detects recovery and **closes** it.
+  This is what gracefully handles both the outage *and* the comeback, per provider — Twilio can be
+  open while Mailgun is healthy.
+- **Provider idempotency key** so a retry after an ambiguous send (vendor accepted, response lost)
+  doesn't double-send — no duplicate texts or emails.
+- **Rate-limited backlog drain** on recovery (concurrency cap honoring vendor limits) so the queue
+  empties steadily instead of triggering a second outage.
+- **Deadlines + dead-letter.** Time-sensitive jobs past their `not_after` expire rather than deliver
+  late (a reminder for a past appointment is worse than none); jobs past `max_attempts` are
+  dead-lettered to `failed` and alerted on.
+- **Signals + failover.** Queue depth and oldest-pending age are the truest "vendor is down" alerts;
+  because delivery sits behind the `NotificationSender` port, an open breaker can optionally route a
+  channel to a secondary provider (SES/SendGrid, a backup SMS carrier).
 
 ### 4. Status modeling: canonical lifecycle + event log + per-provider adapters
 A single overwritten `status` column can't represent the reality that **Twilio and Mailgun speak
